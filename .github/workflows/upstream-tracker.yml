@@ -1,5 +1,14 @@
 name: upstream-tracker
 
+# Watches upstream rohitg00/agentmemory's deploy/fly/Dockerfile for
+# changes to the III_VERSION pin and re-vendors entrypoint.sh from the
+# same source. AGENTMEMORY_VERSION is intentionally NOT tracked here:
+# upstream's Dockerfile lags 10+ versions behind their npm releases, so
+# we let Renovate handle agentmemory bumps via the npm datasource and
+# treat upstream's Dockerfile as the authoritative source ONLY for the
+# iii compatibility pin (the one that breaks if mis-set, per upstream's
+# own Dockerfile comments).
+
 on:
   schedule:
     - cron: "0 6 * * *"  # daily at 06:00 UTC
@@ -15,44 +24,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Diff upstream pins against ours
+      - name: Diff upstream iii pin against ours
         id: diff
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eu
-          UP_TAG=$(gh api repos/rohitg00/agentmemory/releases/latest --jq .tag_name)
-          UP_DOCKERFILE=$(gh api "repos/rohitg00/agentmemory/contents/deploy/fly/Dockerfile?ref=${UP_TAG}" --jq .content | base64 -d)
-          UP_AGENTMEMORY=$(printf '%s\n' "$UP_DOCKERFILE" | grep -E '^ARG AGENTMEMORY_VERSION=' | head -1 | cut -d= -f2)
+          UP_DOCKERFILE=$(gh api repos/rohitg00/agentmemory/contents/deploy/fly/Dockerfile --jq .content | base64 -d)
           UP_III=$(printf '%s\n' "$UP_DOCKERFILE" | grep -E '^ARG III_VERSION=' | head -1 | cut -d= -f2)
-          OUR_AGENTMEMORY=$(grep -E '^ARG AGENTMEMORY_VERSION=' Dockerfile | head -1 | cut -d= -f2)
           OUR_III=$(grep -E '^ARG III_VERSION=' Dockerfile | head -1 | cut -d= -f2)
-          echo "upstream_tag=${UP_TAG}" >> "$GITHUB_OUTPUT"
-          echo "up_agentmemory=${UP_AGENTMEMORY}" >> "$GITHUB_OUTPUT"
           echo "up_iii=${UP_III}" >> "$GITHUB_OUTPUT"
-          echo "our_agentmemory=${OUR_AGENTMEMORY}" >> "$GITHUB_OUTPUT"
           echo "our_iii=${OUR_III}" >> "$GITHUB_OUTPUT"
-          if [ "$UP_AGENTMEMORY" != "$OUR_AGENTMEMORY" ] || [ "$UP_III" != "$OUR_III" ]; then
+          if [ "$UP_III" != "$OUR_III" ]; then
             echo "needs_sync=true" >> "$GITHUB_OUTPUT"
           else
             echo "needs_sync=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Compare entrypoint.sh
+      - name: Re-vendor entrypoint.sh from upstream HEAD
         if: steps.diff.outputs.needs_sync == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          UP_TAG: ${{ steps.diff.outputs.upstream_tag }}
         run: |
-          gh api "repos/rohitg00/agentmemory/contents/deploy/fly/entrypoint.sh?ref=${UP_TAG}" \
+          gh api repos/rohitg00/agentmemory/contents/deploy/fly/entrypoint.sh \
             --jq .content | base64 -d > entrypoint.sh
           chmod +x entrypoint.sh
 
-      - name: Apply ARG bumps to Dockerfile
+      - name: Bump III pins in Dockerfile
         if: steps.diff.outputs.needs_sync == 'true'
         run: |
           sed -i -E \
-            -e "s/^ARG AGENTMEMORY_VERSION=.*/ARG AGENTMEMORY_VERSION=${{ steps.diff.outputs.up_agentmemory }}/" \
             -e "s/^ARG III_VERSION=.*/ARG III_VERSION=${{ steps.diff.outputs.up_iii }}/" \
             -e "s/^ARG III_SDK_VERSION=.*/ARG III_SDK_VERSION=${{ steps.diff.outputs.up_iii }}/" \
             Dockerfile
@@ -60,16 +61,20 @@ jobs:
       - uses: peter-evans/create-pull-request@v6
         if: steps.diff.outputs.needs_sync == 'true'
         with:
-          branch: upstream-sync/agentmemory-${{ steps.diff.outputs.up_agentmemory }}-iii-${{ steps.diff.outputs.up_iii }}
-          commit-message: "chore: upstream-sync to agentmemory ${{ steps.diff.outputs.up_agentmemory }} / iii ${{ steps.diff.outputs.up_iii }}"
-          title: "upstream-sync: agentmemory ${{ steps.diff.outputs.up_agentmemory }} / iii ${{ steps.diff.outputs.up_iii }}"
+          branch: upstream-sync/iii-${{ steps.diff.outputs.up_iii }}
+          commit-message: "chore: upstream-sync iii ${{ steps.diff.outputs.up_iii }}"
+          title: "upstream-sync: iii ${{ steps.diff.outputs.up_iii }}"
           body: |
-            Atomic bump triggered by upstream release ${{ steps.diff.outputs.upstream_tag }}.
+            Upstream rohitg00/agentmemory's `deploy/fly/Dockerfile` now pins iii
+            to `${{ steps.diff.outputs.up_iii }}` (we were on `${{ steps.diff.outputs.our_iii }}`).
 
-            - agentmemory: `${{ steps.diff.outputs.our_agentmemory }}` → `${{ steps.diff.outputs.up_agentmemory }}`
-            - iii: `${{ steps.diff.outputs.our_iii }}` → `${{ steps.diff.outputs.up_iii }}`
+            This is the "load-bearing" pin the upstream maintainer changes only
+            when agentmemory has been refactored for a new iii architecture.
+            `entrypoint.sh` re-vendored from upstream HEAD as part of the bump.
 
-            Release notes: https://github.com/rohitg00/agentmemory/releases/tag/${{ steps.diff.outputs.upstream_tag }}
+            **Review before merge:** scan the diff in `entrypoint.sh` — upstream
+            sometimes restructures it in the same commit that bumps iii.
 
-            `entrypoint.sh` re-vendored from upstream at the same tag.
+            Renovate handles `AGENTMEMORY_VERSION` separately via the npm
+            datasource; that pin is NOT tracked by this workflow.
           labels: upstream-sync
