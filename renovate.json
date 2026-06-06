@@ -1,0 +1,41 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":automergePatch",
+    ":automergeMinor",
+    ":automergePr"
+  ],
+  "packageRules": [
+    {
+      "matchUpdateTypes": ["major"],
+      "automerge": false
+    },
+    {
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["iiidev/iii", "@agentmemory/agentmemory"],
+      "groupName": null
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^Dockerfile$/"],
+      "matchStrings": [
+        "ARG AGENTMEMORY_VERSION=(?<currentValue>[^\\s]+)"
+      ],
+      "datasourceTemplate": "npm",
+      "depNameTemplate": "@agentmemory/agentmemory"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^Dockerfile$/"],
+      "matchStrings": [
+        "ARG III_VERSION=(?<currentValue>[^\\s]+)",
+        "ARG III_SDK_VERSION=(?<currentValue>[^\\s]+)"
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "iiidev/iii"
+    }
+  ]
+}
