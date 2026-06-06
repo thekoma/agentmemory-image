@@ -1,0 +1,75 @@
+name: upstream-tracker
+
+on:
+  schedule:
+    - cron: "0 6 * * *"  # daily at 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Diff upstream pins against ours
+        id: diff
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          UP_TAG=$(gh api repos/rohitg00/agentmemory/releases/latest --jq .tag_name)
+          UP_DOCKERFILE=$(gh api "repos/rohitg00/agentmemory/contents/deploy/fly/Dockerfile?ref=${UP_TAG}" --jq .content | base64 -d)
+          UP_AGENTMEMORY=$(printf '%s\n' "$UP_DOCKERFILE" | grep -E '^ARG AGENTMEMORY_VERSION=' | head -1 | cut -d= -f2)
+          UP_III=$(printf '%s\n' "$UP_DOCKERFILE" | grep -E '^ARG III_VERSION=' | head -1 | cut -d= -f2)
+          OUR_AGENTMEMORY=$(grep -E '^ARG AGENTMEMORY_VERSION=' Dockerfile | head -1 | cut -d= -f2)
+          OUR_III=$(grep -E '^ARG III_VERSION=' Dockerfile | head -1 | cut -d= -f2)
+          echo "upstream_tag=${UP_TAG}" >> "$GITHUB_OUTPUT"
+          echo "up_agentmemory=${UP_AGENTMEMORY}" >> "$GITHUB_OUTPUT"
+          echo "up_iii=${UP_III}" >> "$GITHUB_OUTPUT"
+          echo "our_agentmemory=${OUR_AGENTMEMORY}" >> "$GITHUB_OUTPUT"
+          echo "our_iii=${OUR_III}" >> "$GITHUB_OUTPUT"
+          if [ "$UP_AGENTMEMORY" != "$OUR_AGENTMEMORY" ] || [ "$UP_III" != "$OUR_III" ]; then
+            echo "needs_sync=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_sync=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compare entrypoint.sh
+        if: steps.diff.outputs.needs_sync == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UP_TAG: ${{ steps.diff.outputs.upstream_tag }}
+        run: |
+          gh api "repos/rohitg00/agentmemory/contents/deploy/fly/entrypoint.sh?ref=${UP_TAG}" \
+            --jq .content | base64 -d > entrypoint.sh
+          chmod +x entrypoint.sh
+
+      - name: Apply ARG bumps to Dockerfile
+        if: steps.diff.outputs.needs_sync == 'true'
+        run: |
+          sed -i -E \
+            -e "s/^ARG AGENTMEMORY_VERSION=.*/ARG AGENTMEMORY_VERSION=${{ steps.diff.outputs.up_agentmemory }}/" \
+            -e "s/^ARG III_VERSION=.*/ARG III_VERSION=${{ steps.diff.outputs.up_iii }}/" \
+            -e "s/^ARG III_SDK_VERSION=.*/ARG III_SDK_VERSION=${{ steps.diff.outputs.up_iii }}/" \
+            Dockerfile
+
+      - uses: peter-evans/create-pull-request@v6
+        if: steps.diff.outputs.needs_sync == 'true'
+        with:
+          branch: upstream-sync/agentmemory-${{ steps.diff.outputs.up_agentmemory }}-iii-${{ steps.diff.outputs.up_iii }}
+          commit-message: "chore: upstream-sync to agentmemory ${{ steps.diff.outputs.up_agentmemory }} / iii ${{ steps.diff.outputs.up_iii }}"
+          title: "upstream-sync: agentmemory ${{ steps.diff.outputs.up_agentmemory }} / iii ${{ steps.diff.outputs.up_iii }}"
+          body: |
+            Atomic bump triggered by upstream release ${{ steps.diff.outputs.upstream_tag }}.
+
+            - agentmemory: `${{ steps.diff.outputs.our_agentmemory }}` → `${{ steps.diff.outputs.up_agentmemory }}`
+            - iii: `${{ steps.diff.outputs.our_iii }}` → `${{ steps.diff.outputs.up_iii }}`
+
+            Release notes: https://github.com/rohitg00/agentmemory/releases/tag/${{ steps.diff.outputs.upstream_tag }}
+
+            `entrypoint.sh` re-vendored from upstream at the same tag.
+          labels: upstream-sync
