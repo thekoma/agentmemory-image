@@ -1,0 +1,71 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - entrypoint.sh
+      - .github/workflows/build.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract versions and compute revision
+        id: ver
+        run: |
+          set -eu
+          AGENTMEMORY_VERSION=$(grep -E '^ARG AGENTMEMORY_VERSION=' Dockerfile | head -1 | cut -d= -f2)
+          III_VERSION=$(grep -E '^ARG III_VERSION=' Dockerfile | head -1 | cut -d= -f2)
+          LAST_BUMP=$(git log -1 --pretty=format:%H -G '^ARG AGENTMEMORY_VERSION=' -- Dockerfile)
+          if [ -z "$LAST_BUMP" ]; then
+            REV=0
+          else
+            REV=$(git rev-list "${LAST_BUMP}..HEAD" --count -- Dockerfile entrypoint.sh)
+          fi
+          echo "agentmemory=${AGENTMEMORY_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "iii=${III_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "rev=${REV}" >> "$GITHUB_OUTPUT"
+          echo "tag_full=${AGENTMEMORY_VERSION}-${REV}" >> "$GITHUB_OUTPUT"
+          echo "tag_version=${AGENTMEMORY_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Built tags: ${AGENTMEMORY_VERSION}-${REV}, ${AGENTMEMORY_VERSION}, latest" >&2
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: true
+          sbom: true
+          build-args: |
+            AGENTMEMORY_VERSION=${{ steps.ver.outputs.agentmemory }}
+            III_VERSION=${{ steps.ver.outputs.iii }}
+            III_SDK_VERSION=${{ steps.ver.outputs.iii }}
+          tags: |
+            ghcr.io/thekoma/agentmemory:${{ steps.ver.outputs.tag_full }}
+            ghcr.io/thekoma/agentmemory:${{ steps.ver.outputs.tag_version }}
+            ghcr.io/thekoma/agentmemory:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/thekoma/agentmemory-image
+            org.opencontainers.image.description=Public rebuild of rohitg00/agentmemory
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.version=${{ steps.ver.outputs.tag_full }}
