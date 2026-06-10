@@ -58,7 +58,7 @@ jobs:
             -e "s/^ARG III_SDK_VERSION=.*/ARG III_SDK_VERSION=${{ steps.diff.outputs.up_iii }}/" \
             Dockerfile
 
-      - uses: peter-evans/create-pull-request@v6
+      - uses: peter-evans/create-pull-request@v8
         if: steps.diff.outputs.needs_sync == 'true'
         with:
           branch: upstream-sync/iii-${{ steps.diff.outputs.up_iii }}
