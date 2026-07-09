@@ -3,15 +3,15 @@
 # Pinned versions tracked by Renovate (regex managers in renovate.json)
 # and the daily upstream-tracker.yml workflow. Bump in sync with
 # upstream rohitg00/agentmemory's deploy/fly/Dockerfile.
-ARG III_VERSION=0.21.3
+ARG III_VERSION=0.21.4
 
 FROM iiidev/iii:${III_VERSION} AS iii-image
 
 FROM node:24-slim
 
 ARG AGENTMEMORY_VERSION=0.9.27
-ARG III_VERSION=0.21.3
-ARG III_SDK_VERSION=0.21.3
+ARG III_VERSION=0.21.4
+ARG III_SDK_VERSION=0.21.4
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends openssl ca-certificates tini gosu curl \
