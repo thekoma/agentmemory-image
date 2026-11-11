@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.28
+# syntax=docker/dockerfile:1.29
 
 # Pinned versions tracked by Renovate (regex managers in renovate.json)
 # and the daily upstream-tracker.yml workflow. Bump in sync with
